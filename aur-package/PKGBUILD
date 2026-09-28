@@ -1,0 +1,33 @@
+# Maintainer: Oleg Shapovalov <https://github.com/OlegShapovalov>
+pkgname=goatlyn-git
+pkgver=1.0.0.r0
+pkgrel=1
+pkgdesc="Fast and modern Qt6/C++ terminal emulator with tabs, splits and autosuggestions"
+arch=('x86_64')
+url="https://github.com/OlegShapovalov/goatlyn"
+license=('MIT')
+depends=('qt6-base' 'libvterm')
+makedepends=('git' 'cmake' 'gcc')
+provides=('goatlyn')
+conflicts=('goatlyn')
+source=("git+https://github.com/OlegShapovalov/goatlyn.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/goatlyn"
+    printf "1.0.0.r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cmake -B build -S "$srcdir/goatlyn" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build -j$(nproc)
+}
+
+package() {
+    DESTDIR="$pkgdir" cmake --install build
+    if [ -f "$srcdir/goatlyn/LICENSE" ]; then
+        install -Dm644 "$srcdir/goatlyn/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    fi
+}
