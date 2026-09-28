@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Goatlyn
+GenericName=Terminal Emulator
+Comment=Fast and lightweight Qt6/C++ terminal emulator
+Exec=goatlyn
+Icon=goatlyn
+Terminal=false
+Type=Application
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;commandline;cmd;
+StartupNotify=true
