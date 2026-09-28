@@ -733,16 +733,20 @@ void TermWidget::copySelectionToClipboard() {
 }
 
 void TermWidget::resizeEvent(QResizeEvent*) {
-    int newCols = std::max(10, width() / charW_);
-    int newRows = std::max(3, height() / charH_);
-    if (newCols != cols_ || newRows != rows_) {
-        cols_ = newCols;
-        rows_ = newRows;
+    int newCols = std::max(20, width() / std::max(1, charW_));
+    int newRows = std::max(5, height() / std::max(1, charH_));
+    
+    cols_ = newCols;
+    rows_ = newRows;
+    
+    if (vt_) {
         vterm_set_size(vt_, rows_, cols_);
         vterm_screen_flush_damage(vts_);
-        pty_.resize(cols_, rows_);
-        emit stateChanged(this);
     }
+    
+    // Гарантированно шлем ioctl ядра с новым размером окна
+    pty_.resize(cols_, rows_);
+    emit stateChanged(this);
 }
 
 void TermWidget::sendMouseEvent(int button, int col, int row, bool isRelease) {
