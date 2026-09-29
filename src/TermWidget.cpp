@@ -50,7 +50,6 @@ int TermWidget::onSetTermProp(VTermProp prop, VTermValue* val, void* user) {
 }
 
 int TermWidget::onBell(void* /*user*/) {
-    // Звуковой сигнал отключен
     return 1;
 }
 
@@ -73,6 +72,12 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
     setCursor(Qt::IBeamCursor);
 
     updateFontMetrics();
+
+    connect(&ConfigManager::instance(), &ConfigManager::configChanged, this, [this]() {
+        updateFontMetrics();
+        resizeEvent(nullptr);
+        update();
+    });
 
     targetRegex_ = QRegularExpression(
         QStringLiteral(R"((https?://[^\s<>"'\(\)\[\]\{\}]+|(?:\~|\.|\/|[a-zA-Z0-9_\-])[^\s<>"'\(\)\[\]\{\}]*\/[^\s<>"'\(\)\[\]\{\}]+|[a-zA-Z0-9_\-\.]+\.[a-zA-Z0-9_]{1,10}))")
@@ -97,7 +102,6 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
     });
     cursorBlinkTimer_->start(500);
 
-    // Загружаем историю bash для подсказок
     const char* home = getenv("HOME");
     if (home) {
         std::ifstream hFile(std::string(home) + "/.bash_history");
@@ -117,13 +121,36 @@ TermWidget::~TermWidget() {
 }
 
 void TermWidget::updateFontMetrics() {
-    QFont monoFont = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+    auto& cfg = ConfigManager::instance();
+    QString family = cfg.fontFamily();
+
+    QFont monoFont;
+    if (!family.isEmpty() && family != "monospace") {
+        monoFont.setFamily(family);
+    } else {
+        QStringList candidates = {
+            "FiraCode Nerd Font", "Fira Code", 
+            "JetBrainsMono Nerd Font", "JetBrains Mono", 
+            "Noto Sans Mono", "DejaVu Sans Mono", "Courier New"
+        };
+        monoFont.setFamilies(candidates);
+    }
+
+    monoFont.setStyleHint(QFont::Monospace, QFont::PreferQuality);
+    monoFont.setFixedPitch(true);
+    monoFont.setKerning(false);
+    monoFont.setLetterSpacing(QFont::AbsoluteSpacing, 0);
+    monoFont.setStyleStrategy(QFont::PreferAntialias);
     monoFont.setPointSize(fontSize_);
     setFont(monoFont);
 
     QFontMetrics fm(monoFont);
-    charW_ = std::max(1, fm.horizontalAdvance('M'));
-    charH_ = std::max(1, fm.height());
+    charW_ = fm.horizontalAdvance('x');
+    if (charW_ <= 0) {
+        charW_ = fm.averageCharWidth();
+    }
+    charW_ = std::max(1, charW_);
+    charH_ = std::max(1, fm.lineSpacing());
     charAscent_ = fm.ascent();
 }
 
@@ -279,7 +306,6 @@ void TermWidget::displayWelcomeBanner() {
     char host[256] = "archlinux";
     gethostname(host, sizeof(host));
 
-    // Слева оставляем 20 пробелов под отрисовку PNG-аватара
     std::string pad = "                                      ";
     std::vector<std::string> info = {
         std::string("\033[1;32m") + user + "\033[0m@\033[1;32m" + host + "\033[0m",
@@ -573,7 +599,6 @@ void TermWidget::paintEvent(QPaintEvent*) {
     const auto& th = ConfigManager::instance().currentTheme();
     painter.fillRect(rect(), th.background);
 
-    // Neofetch PNG-логотип слева от системной информации (увеличен в 2 раза)
     static QPixmap goatImg(":/goatlyn.png");
     if (!goatImg.isNull() && history_.empty() && scrollOffset_ == 0) {
         int avatarH = charH_ * 16;
@@ -583,8 +608,6 @@ void TermWidget::paintEvent(QPaintEvent*) {
         int imgX = charW_ * 2;
         painter.drawPixmap(imgX, imgY, scaled);
     }
-
-
 
     int historyCount = static_cast<int>(history_.size());
 
@@ -623,7 +646,6 @@ void TermWidget::paintEvent(QPaintEvent*) {
                 painter.fillRect(x, y, charW_, charH_, bg);
             }
             if (selected) {
-                // Полупрозрачный акцентный слой выделения поверх фона
                 painter.fillRect(x, y, charW_, charH_, QColor(137, 180, 250, 110));
             }
 
@@ -631,7 +653,9 @@ void TermWidget::paintEvent(QPaintEvent*) {
                 painter.setPen(fg);
                 auto cp = static_cast<char32_t>(cell.chars[0]);
                 QString text = QString::fromUcs4(&cp, 1);
-                painter.drawText(x, y + charAscent_, text);
+                
+                QRect cellRect(x, y, charW_, charH_);
+                painter.drawText(cellRect, Qt::AlignCenter, text);
             }
         }
 
@@ -733,16 +757,19 @@ void TermWidget::copySelectionToClipboard() {
 }
 
 void TermWidget::resizeEvent(QResizeEvent*) {
-    int newCols = std::max(10, width() / charW_);
-    int newRows = std::max(3, height() / charH_);
-    if (newCols != cols_ || newRows != rows_) {
-        cols_ = newCols;
-        rows_ = newRows;
+    int newCols = std::max(20, width() / std::max(1, charW_));
+    int newRows = std::max(5, height() / std::max(1, charH_));
+    
+    cols_ = newCols;
+    rows_ = newRows;
+    
+    if (vt_) {
         vterm_set_size(vt_, rows_, cols_);
         vterm_screen_flush_damage(vts_);
-        pty_.resize(cols_, rows_);
-        emit stateChanged(this);
     }
+    
+    pty_.resize(cols_, rows_);
+    emit stateChanged(this);
 }
 
 void TermWidget::sendMouseEvent(int button, int col, int row, bool isRelease) {
@@ -853,7 +880,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
     auto mods = event->modifiers();
     int key = event->key();
 
-    // 1. Игнорируем нажатия чистых модификаторов (чтобы не сбивать выделение)
     if (key == Qt::Key_Control) {
         checkTargetHover(mapFromGlobal(QCursor::pos()), true);
         return;
@@ -862,7 +888,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // 2. Копирование по Ctrl+Shift+C или просто Ctrl+C при наличии выделения
     bool isCtrlC = (mods & Qt::ControlModifier) && (key == Qt::Key_C);
     bool hasSelection = selStart_.has_value() && selEnd_.has_value() && (*selStart_ != *selEnd_);
 
@@ -874,7 +899,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // 3. Вставка по Ctrl+Shift+V
     if ((mods & Qt::ControlModifier) && (mods & Qt::ShiftModifier) && key == Qt::Key_V) {
         QClipboard* clipboard = QGuiApplication::clipboard();
         QByteArray text = clipboard->text().toUtf8();
@@ -885,7 +909,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // 4. Скроллинг через Shift+PageUp / Shift+PageDown
     if (mods & Qt::ShiftModifier) {
         if (key == Qt::Key_PageUp) {
             scrollOffset_ = std::min(scrollOffset_ + rows_, static_cast<int>(history_.size()));
@@ -898,7 +921,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         }
     }
 
-    // 5. Принятие подсказки по Tab / Стрелке вправо
     if ((key == Qt::Key_Right || key == Qt::Key_Tab) && !currentSuggestion_.isEmpty()) {
         QByteArray text = currentSuggestion_.toUtf8();
         currentInputBuffer_ += currentSuggestion_;
@@ -908,7 +930,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // Любой дальнейший ввод сбрасывает скролл и снимает выделение
     scrollToBottom();
     if (hasSelection) {
         selStart_.reset();
@@ -916,7 +937,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         update();
     }
 
-    // 6. Ведение буфера ввода для подсказок
     if (key == Qt::Key_Return || key == Qt::Key_Enter) {
         QString cmd = currentInputBuffer_.trimmed();
         if (!cmd.isEmpty()) {
@@ -942,7 +962,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         }
     }
 
-    // 7. Стандартные Ctrl комбинации терминала (Ctrl+A ... Ctrl+Z)
     if ((mods & Qt::ControlModifier) && !(mods & Qt::ShiftModifier)) {
         if (key >= Qt::Key_A && key <= Qt::Key_Z) {
             char ctrlByte = static_cast<char>(key - Qt::Key_A + 1);
@@ -955,7 +974,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         }
     }
 
-    // 8. Функциональные клавиши F1-F12
     if (key >= Qt::Key_F1 && key <= Qt::Key_F12) {
         const char* fkeys[] = {
             "\x1bOP", "\x1bOQ", "\x1bOR", "\x1bOS",
@@ -967,7 +985,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // 9. Навигация и спецклавиши
     switch (key) {
         case Qt::Key_Up:        pty_.writeData("\x1b[A", 3); return;
         case Qt::Key_Down:      pty_.writeData("\x1b[B", 3); return;
@@ -987,7 +1004,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         default: break;
     }
 
-    // 10. Обычный ввод текста
     QByteArray bytes = event->text().toUtf8();
     if (!bytes.isEmpty()) {
         pty_.writeData(bytes.data(), bytes.size());
