@@ -1,12 +1,20 @@
+# Build
 build/
 *.o
 *.a
 *.so
-Makefile
-CMakeFiles/
-cmake_install.cmake
-CMakeCache.txt
-goatlyn_autogen/
-*.user
-.cache/
 compile_commands.json
+
+# Editors
+.vscode/
+.idea/
+*.user
+*.autosave
+
+# AUR / makepkg
+aur-package/pkg/
+aur-package/src/
+aur-package/*.tar.gz
+aur-package/*.tar.xz
+aur-package/*.tar.zst
+aur-package/*.pkg.tar.*
