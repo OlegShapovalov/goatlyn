@@ -143,7 +143,7 @@ std::vector<QString> ConfigManager::getAvailableShells() const {
 QString ConfigManager::getConfigPath() const {
     const char* home = getenv("HOME");
     QString base = home ? QString::fromLocal8Bit(home) : QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    return base + "/.config/goatling/config.json";
+    return base + "/.config/goatlyn/config.json";
 }
 
 void ConfigManager::load() {

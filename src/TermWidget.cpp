@@ -20,6 +20,7 @@
 
 int TermWidget::sbPushline(int cols, const VTermScreenCell* cells, void* user) {
     auto* self = static_cast<TermWidget*>(user);
+    if (self->isAltScreen_) return 0;
     std::vector<VTermScreenCell> line(cells, cells + cols);
     self->history_.push_back(std::move(line));
     if (self->history_.size() > self->maxHistory_) {
@@ -45,6 +46,14 @@ int TermWidget::onSetTermProp(VTermProp prop, VTermValue* val, void* user) {
     auto* self = static_cast<TermWidget*>(user);
     if (prop == VTERM_PROP_MOUSE) {
         self->mouseProtocol_ = val->number;
+    } else if (prop == VTERM_PROP_ALTSCREEN) {
+        self->isAltScreen_ = val->boolean;
+        self->scrollOffset_ = 0;
+        if (self->isAltScreen_) {
+            self->bannerActive_ = false;
+            self->currentSuggestion_.clear();
+            self->currentInputBuffer_.clear();
+        }
     }
     return 1;
 }
@@ -113,7 +122,9 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
         }
     }
 
-    QTimer::singleShot(80, this, &TermWidget::displayWelcomeBanner);
+    if (ConfigManager::instance().showBanner()) {
+        QTimer::singleShot(80, this, &TermWidget::displayWelcomeBanner);
+    }
 }
 
 TermWidget::~TermWidget() {
@@ -249,6 +260,11 @@ void TermWidget::updateSearchResults() {
 
 void TermWidget::updateSuggestion() {
     currentSuggestion_.clear();
+    if (isAltScreen_ || currentProcName_ != "bash") {
+        update();
+        return;
+    }
+
     if (currentInputBuffer_.length() >= 2) {
         for (auto it = cmdHistory_.rbegin(); it != cmdHistory_.rend(); ++it) {
             if (it->startsWith(currentInputBuffer_) && it->length() > currentInputBuffer_.length()) {
@@ -261,6 +277,8 @@ void TermWidget::updateSuggestion() {
 }
 
 void TermWidget::displayWelcomeBanner() {
+    if (!ConfigManager::instance().showBanner()) return;
+
     std::string osName = "Arch Linux";
     std::ifstream osFile("/etc/os-release");
     std::string line;
@@ -355,6 +373,10 @@ void TermWidget::pollActiveProcess() {
 
     if (activeName != currentProcName_) {
         currentProcName_ = activeName;
+        if (currentProcName_ != "bash") {
+            currentSuggestion_.clear();
+            currentInputBuffer_.clear();
+        }
         QString qName = QString::fromStdString(activeName);
         QString icon = getProcessIcon(activeName);
         emit titleChanged(this, qName, icon);
@@ -600,7 +622,7 @@ void TermWidget::paintEvent(QPaintEvent*) {
     painter.fillRect(rect(), th.background);
 
     static QPixmap goatImg(":/goatlyn.png");
-    if (!goatImg.isNull() && history_.empty() && scrollOffset_ == 0) {
+    if (!goatImg.isNull() && ConfigManager::instance().showBanner() && !isAltScreen_ && history_.empty() && scrollOffset_ == 0) {
         int avatarH = charH_ * 16;
         int avatarW = charW_ * 34;
         QPixmap scaled = goatImg.scaled(avatarW, avatarH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
@@ -702,9 +724,10 @@ void TermWidget::paintEvent(QPaintEvent*) {
                 }
             }
 
-            if (!currentSuggestion_.isEmpty()) {
+            // Отрисовка ghost-подсказки (только в bash вне alt-screen)
+            if (!currentSuggestion_.isEmpty() && !isAltScreen_ && currentProcName_ == "bash") {
                 QColor ghostColor = th.foreground;
-                ghostColor.setAlpha(140);
+                ghostColor.setAlpha(120);
                 painter.setPen(ghostColor);
                 int ghostX = cursor.col * charW_;
                 int ghostY = cursor.row * charH_ + charAscent_;
@@ -880,6 +903,8 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
     auto mods = event->modifiers();
     int key = event->key();
 
+
+
     if (key == Qt::Key_Control) {
         checkTargetHover(mapFromGlobal(QCursor::pos()), true);
         return;
@@ -899,12 +924,30 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
+    // Вставка из буфера обмена (Ctrl+Shift+V)
     if ((mods & Qt::ControlModifier) && (mods & Qt::ShiftModifier) && key == Qt::Key_V) {
         QClipboard* clipboard = QGuiApplication::clipboard();
-        QByteArray text = clipboard->text().toUtf8();
+        QString text = clipboard->text();
         if (!text.isEmpty()) {
             scrollToBottom();
-            pty_.writeData(text.data(), text.size());
+            currentSuggestion_.clear();
+            currentInputBuffer_.clear();
+
+            text.replace("\r\n", "\n");
+            text.replace("\r", "\n");
+
+            if (isAltScreen_) {
+                // Bracketed Paste для nano/vim
+                pty_.writeData("\x1b[200~", 6);
+                QByteArray data = text.toUtf8();
+                pty_.writeData(data.data(), data.size());
+                pty_.writeData("\x1b[201~", 6);
+            } else {
+                // Для шелла отправляем чистый \n, как в Kitty
+                QByteArray data = text.toUtf8();
+                pty_.writeData(data.data(), data.size());
+            }
+            update();
         }
         return;
     }
@@ -921,7 +964,8 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         }
     }
 
-    if ((key == Qt::Key_Right || key == Qt::Key_Tab) && !currentSuggestion_.isEmpty()) {
+    // Принятие автодополнения (по стрелке вправо или Tab при пустом хвосте)
+    if ((key == Qt::Key_Right || key == Qt::Key_Tab) && !currentSuggestion_.isEmpty() && !isAltScreen_ && currentProcName_ == "bash") {
         QByteArray text = currentSuggestion_.toUtf8();
         currentInputBuffer_ += currentSuggestion_;
         currentSuggestion_.clear();
@@ -949,14 +993,20 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
     } else if ((mods & Qt::ControlModifier) && key == Qt::Key_C) {
         currentInputBuffer_.clear();
         currentSuggestion_.clear();
+    } else if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Escape) {
+        // Сброс подсказки при навигации по истории или отмене
+        currentInputBuffer_.clear();
+        currentSuggestion_.clear();
     } else if (key == Qt::Key_Backspace) {
         if (!currentInputBuffer_.isEmpty()) {
             currentInputBuffer_.chop(1);
             updateSuggestion();
+        } else {
+            currentSuggestion_.clear();
         }
     } else {
         QString txt = event->text();
-        if (!txt.isEmpty() && txt.at(0).isPrint()) {
+        if (!txt.isEmpty() && txt.at(0).isPrint() && !(mods & Qt::ControlModifier)) {
             currentInputBuffer_ += txt;
             updateSuggestion();
         }

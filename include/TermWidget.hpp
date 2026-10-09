@@ -103,6 +103,8 @@ private:
 
     bool cursorBlinkState_ = true;
     int mouseProtocol_ = 0;
+    bool isAltScreen_ = false;
+    bool bannerActive_ = true;
     std::string currentProcName_ = "bash";
 
     std::deque<std::vector<VTermScreenCell>> history_;
