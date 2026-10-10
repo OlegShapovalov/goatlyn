@@ -445,16 +445,35 @@ QColor TermWidget::resolveColor(const VTermColor& color, bool isBg) {
 void TermWidget::onPtyRead() {
     std::vector<char> buffer(16384);
     ssize_t bytes = read(pty_.getMasterFd(), buffer.data(), buffer.size());
+
     if (bytes > 0) {
         vterm_input_write(vt_, buffer.data(), bytes);
         vterm_screen_flush_damage(vts_);
         update();
-    } else if (bytes <= 0) {
+        return;
+    }
+
+    if (bytes == 0) {
+        // EOF: дочерний процесс закрыл pty. Это настоящий конец.
         notifier_->setEnabled(false);
         procPollTimer_->stop();
         cursorBlinkTimer_->stop();
         emit termExited(this);
+        return;
     }
+
+    // bytes < 0
+    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
+        // Не конец: просто данных сейчас нет. QSocketNotifier
+        // мог сработать раньше, чем данные пришли в буфер.
+        return;
+    }
+
+    // Реальная ошибка (EIO, EBADF и т.п.) — процесс считаем мёртвым.
+    notifier_->setEnabled(false);
+    procPollTimer_->stop();
+    cursorBlinkTimer_->stop();
+    emit termExited(this);
 }
 
 CellPoint TermWidget::pixelToCell(const QPoint& pos) const {
