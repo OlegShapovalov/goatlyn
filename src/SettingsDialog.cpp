@@ -1,4 +1,3 @@
-#include <QMessageBox>
 #include "SettingsDialog.hpp"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -154,24 +153,6 @@ void SettingsDialog::pickCursorColor() {
     if (c.isValid()) {
         currentCur_ = c;
         updateColorButtons();
-    }
-}
-
-void SettingsDialog::deleteCurrentTheme() {
-    if (!currentIsCustom_) return;
-
-    QString themeName = themeCombo_->currentText();
-    int res = QMessageBox::question(
-        this,
-        "Удаление темы",
-        QString("Удалить пользовательскую тему «%1»?").arg(themeName),
-        QMessageBox::Yes | QMessageBox::No
-    );
-
-    if (res == QMessageBox::Yes) {
-        int idx = themeCombo_->currentIndex();
-        ConfigManager::instance().removeCustomTheme(themeName);
-        themeCombo_->removeItem(idx);
     }
 }
 

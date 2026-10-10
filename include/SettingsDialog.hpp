@@ -70,7 +70,6 @@ private slots:
     void pickFgColor();
     void pickCursorColor();
     void createNewTheme();
-    void deleteCurrentTheme();
 
 private:
     QListWidget* sidebar_ = nullptr;
@@ -82,12 +81,10 @@ private:
     QPushButton* btnFgColor_ = nullptr;
     QPushButton* btnCursorColor_ = nullptr;
     QPushButton* btnNewTheme_ = nullptr;
-    QPushButton* btnDeleteTheme_ = nullptr;
 
     QColor currentBg_;
     QColor currentFg_;
     QColor currentCur_;
-    bool currentIsCustom_ = false;
 
     QSlider* opacitySlider_ = nullptr;
     QCheckBox* showBannerCheck_ = nullptr;
