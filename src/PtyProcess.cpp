@@ -50,9 +50,6 @@ void PtyProcess::resize(int cols, int rows) {
     ws.ws_col = cols;
     ws.ws_row = rows;
     ioctl(masterFd_, TIOCSWINSZ, &ws);
-    if (childPid_ > 0) {
-        killpg(getpgid(childPid_), SIGWINCH);
-    }
 }
 
 ssize_t PtyProcess::writeData(const char* data, size_t length) {

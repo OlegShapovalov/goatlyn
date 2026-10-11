@@ -92,6 +92,7 @@ private:
     QSocketNotifier* notifier_ = nullptr;
     QTimer* procPollTimer_ = nullptr;
     QTimer* cursorBlinkTimer_ = nullptr;
+    QTimer* resizeTimer_ = nullptr;
 
     int cols_ = 80;
     int rows_ = 24;
@@ -105,6 +106,7 @@ private:
     int mouseProtocol_ = 0;
     bool isAltScreen_ = false;
     bool bannerActive_ = true;
+    bool handlingResize_ = false;
     std::string currentProcName_ = "bash";
 
     std::deque<std::vector<VTermScreenCell>> history_;

@@ -4,10 +4,13 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QTime>
+#include <QDateTime>
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QClipboard>
 #include <QDesktopServices>
+#include <QDebug>
 #include <QUrl>
 #include <QProcess>
 #include <algorithm>
@@ -82,9 +85,26 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
 
     updateFontMetrics();
 
+    resizeTimer_ = new QTimer(this);
+    resizeTimer_->setSingleShot(true);
+    resizeTimer_->setInterval(0);
+    connect(resizeTimer_, &QTimer::timeout, this, [this]() {
+    if (!vt_) {
+        handlingResize_ = false;
+        return;
+    }
+    qDebug() << "[resize] applying:" << cols_ << "x" << rows_
+             << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
+    vterm_set_size(vt_, rows_, cols_);
+    vterm_screen_flush_damage(vts_);
+    pty_.resize(cols_, rows_);
+    update();
+    qDebug() << "[resize] OK";
+    handlingResize_ = false;
+});
+
     connect(&ConfigManager::instance(), &ConfigManager::configChanged, this, [this]() {
         updateFontMetrics();
-        resizeEvent(nullptr);
         update();
     });
 
@@ -169,7 +189,8 @@ void TermWidget::zoomIn() {
     if (fontSize_ < 36) {
         fontSize_ += 1;
         updateFontMetrics();
-        resizeEvent(nullptr);
+        if (resizeTimer_->isActive()) resizeTimer_->stop();
+        resizeTimer_->start();
         emit stateChanged(this);
         update();
     }
@@ -179,7 +200,8 @@ void TermWidget::zoomOut() {
     if (fontSize_ > 6) {
         fontSize_ -= 1;
         updateFontMetrics();
-        resizeEvent(nullptr);
+        if (resizeTimer_->isActive()) resizeTimer_->stop();
+        resizeTimer_->start();
         emit stateChanged(this);
         update();
     }
@@ -189,7 +211,8 @@ void TermWidget::resetZoom() {
     if (fontSize_ != defaultFontSize_) {
         fontSize_ = defaultFontSize_;
         updateFontMetrics();
-        resizeEvent(nullptr);
+        if (resizeTimer_->isActive()) resizeTimer_->stop();
+        resizeTimer_->start();
         emit stateChanged(this);
         update();
     }
@@ -799,18 +822,27 @@ void TermWidget::copySelectionToClipboard() {
 }
 
 void TermWidget::resizeEvent(QResizeEvent*) {
-    int newCols = std::max(20, width() / std::max(1, charW_));
-    int newRows = std::max(5, height() / std::max(1, charH_));
-    
+    if (handlingResize_) return;
+    handlingResize_ = true;
+
+    int newCols = std::clamp(width() / std::max(1, charW_), 20, 300);
+    int newRows = std::clamp(height() / std::max(1, charH_), 10, 100);
+
+    if (newCols == cols_ && newRows == rows_) {
+        handlingResize_ = false;
+        return;
+    }
+
     cols_ = newCols;
     rows_ = newRows;
-    
-    if (vt_) {
-        vterm_set_size(vt_, rows_, cols_);
-        vterm_screen_flush_damage(vts_);
+
+    // pty_.resize УБРАН отсюда — перенесён в лямбду
+
+    if (resizeTimer_->isActive()) {
+        resizeTimer_->stop();
     }
-    
-    pty_.resize(cols_, rows_);
+    resizeTimer_->start();
+
     emit stateChanged(this);
 }
 
