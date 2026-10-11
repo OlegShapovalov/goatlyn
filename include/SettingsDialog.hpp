@@ -1,4 +1,6 @@
 #pragma once
+#include <QApplication>
+#include <QPalette>
 #include <QDialog>
 #include <QListWidget>
 #include <QStackedWidget>

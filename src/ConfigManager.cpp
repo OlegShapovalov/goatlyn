@@ -1,3 +1,5 @@
+#include <QApplication>
+#include <QPalette>
 #include "ConfigManager.hpp"
 #include <QFile>
 #include <QDir>
@@ -106,10 +108,31 @@ ConfigManager& ConfigManager::instance() {
 }
 
 const ThemePalette& ConfigManager::currentTheme() const {
+    if (isSystemTheme()) {
+        systemThemeCache_ = buildSystemTheme();
+        return systemThemeCache_;
+    }
     for (const auto& th : themes_) {
         if (th.name == themeName_) return th;
     }
     return themes_[0];
+}
+
+bool ConfigManager::isSystemTheme() const {
+    return themeName_ == SystemThemeName;
+}
+
+ThemePalette ConfigManager::buildSystemTheme() const {
+    ThemePalette th;
+    th.name = SystemThemeName;
+    th.isCustom = false;
+
+    const QPalette& pal = QApplication::palette();
+    th.background = pal.color(QPalette::Base);
+    th.foreground = pal.color(QPalette::Text);
+    th.cursor = pal.color(QPalette::Highlight);
+
+    return th;
 }
 
 QString ConfigManager::getKeybinding(const QString& actionId, const QString& defaultSeq) const {

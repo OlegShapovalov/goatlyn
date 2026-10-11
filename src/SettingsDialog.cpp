@@ -121,6 +121,14 @@ void SettingsDialog::updateColorButtons() {
 }
 
 void SettingsDialog::onThemeSelected(const QString& name) {
+    if (name == ConfigManager::SystemThemeName) {
+        const QPalette& pal = QApplication::palette();
+        currentBg_ = pal.color(QPalette::Base);
+        currentFg_ = pal.color(QPalette::Text);
+        currentCur_ = pal.color(QPalette::Highlight);
+        updateColorButtons();
+        return;
+    }
     for (const auto& th : ConfigManager::instance().allThemes()) {
         if (th.name == name) {
             currentBg_ = th.background;
@@ -174,6 +182,7 @@ QWidget* SettingsDialog::createAppearancePage() {
     for (const auto& th : ConfigManager::instance().allThemes()) {
         themeCombo_->addItem(th.name);
     }
+    themeCombo_->addItem(ConfigManager::SystemThemeName);
     themeCombo_->setCurrentText(ConfigManager::instance().themeName());
     connect(themeCombo_, &QComboBox::currentTextChanged, this, &SettingsDialog::onThemeSelected);
 
@@ -340,14 +349,31 @@ void SettingsDialog::applyAndSave() {
     auto& cfg = ConfigManager::instance();
 
     QString selectedName = themeCombo_->currentText();
-    ThemePalette p;
-    p.name = selectedName;
-    p.background = currentBg_;
-    p.foreground = currentFg_;
-    p.cursor = currentCur_;
-    p.isCustom = true;
-    cfg.addOrUpdateCustomTheme(p);
+
+if (selectedName == ConfigManager::SystemThemeName) {
     cfg.setTheme(selectedName);
+} else {
+    bool isBuiltIn = false;
+    for (const auto& th : cfg.allThemes()) {
+        if (th.name == selectedName && !th.isCustom) {
+            isBuiltIn = true;
+            break;
+        }
+    }
+
+    if (isBuiltIn) {
+        cfg.setTheme(selectedName);
+    } else {
+        ThemePalette p;
+        p.name = selectedName;
+        p.background = currentBg_;
+        p.foreground = currentFg_;
+        p.cursor = currentCur_;
+        p.isCustom = true;
+        cfg.addOrUpdateCustomTheme(p);
+        cfg.setTheme(selectedName);
+    }
+}
 
     cfg.setBackgroundOpacity(opacitySlider_->value() / 100.0);
     cfg.setShowBanner(showBannerCheck_->isChecked());

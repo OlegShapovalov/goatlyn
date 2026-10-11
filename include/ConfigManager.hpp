@@ -17,6 +17,7 @@ struct ThemePalette {
 class ConfigManager : public QObject {
     Q_OBJECT
 public:
+    
     static ConfigManager& instance();
 
     void load();
@@ -50,6 +51,9 @@ public:
     void setTheme(const QString& name);
     void addOrUpdateCustomTheme(const ThemePalette& theme);
     bool removeCustomTheme(const QString& name);
+    static constexpr const char* SystemThemeName = "Системная тема (Auto)";
+    bool isSystemTheme() const;
+    ThemePalette buildSystemTheme() const;
 
 signals:
     void configChanged();
@@ -66,6 +70,7 @@ private:
     bool showBanner_ = true;
     QString shell_ = "/bin/bash";
     QString themeName_ = "Catppuccin Mocha";
+    mutable ThemePalette systemThemeCache_;
 
     std::vector<ThemePalette> themes_;
     std::map<QString, QString> keybindings_;
