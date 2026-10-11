@@ -661,7 +661,9 @@ void TermWidget::paintEvent(QPaintEvent*) {
     painter.setFont(font());
 
     const auto& th = ConfigManager::instance().currentTheme();
-    painter.fillRect(rect(), th.background);
+    QColor bgFill = th.background;
+    bgFill.setAlphaF(ConfigManager::instance().backgroundOpacity());
+    painter.fillRect(rect(), bgFill);
 
     static QPixmap goatImg(":/goatlyn.png");
     if (!goatImg.isNull() && ConfigManager::instance().showBanner() && !isAltScreen_ && history_.empty() && scrollOffset_ == 0) {
