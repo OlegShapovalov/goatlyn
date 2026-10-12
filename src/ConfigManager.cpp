@@ -282,7 +282,11 @@ bool ConfigManager::removeCustomTheme(const QString& name) {
 
 void ConfigManager::setFontFamily(const QString& fam) { fontFamily_ = fam; }
 void ConfigManager::setFontSize(int sz) { fontSize_ = sz; }
-void ConfigManager::setBackgroundOpacity(double op) { opacity_ = op; }
+void ConfigManager::setBackgroundOpacity(double op) {
+    if (qFuzzyCompare(opacity_, op)) return;
+    opacity_ = op;
+    emit configChanged();
+}
 void ConfigManager::setCursorShape(const QString& shape) { cursorShape_ = shape; }
 void ConfigManager::setCursorBlink(bool blink) { cursorBlink_ = blink; }
 void ConfigManager::setShowBanner(bool show) { showBanner_ = show; }

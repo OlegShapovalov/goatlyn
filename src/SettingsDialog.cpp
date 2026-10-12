@@ -270,6 +270,9 @@ QWidget* SettingsDialog::createAppearancePage() {
     opacitySlider_->setRange(40, 100);
     opacitySlider_->setValue(static_cast<int>(ConfigManager::instance().backgroundOpacity() * 100));
     form->addRow("Прозрачность фона (%):", opacitySlider_);
+    connect(opacitySlider_, &QSlider::valueChanged, this, [](int value) {
+        ConfigManager::instance().setBackgroundOpacity(value / 100.0);
+    });
 
     showBannerCheck_ = new QCheckBox("Отображать баннер при запуске", w);
     showBannerCheck_->setChecked(ConfigManager::instance().showBanner());
