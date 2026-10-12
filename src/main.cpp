@@ -1,6 +1,7 @@
 #include <QIcon>
 #include <QApplication>
 #include <string>
+#include <QLoggingCategory>
 #include "MainWindow.hpp"
 
 int main(int argc, char* argv[]) {
@@ -17,6 +18,7 @@ int main(int argc, char* argv[]) {
     }
 
     QApplication app(argc, argv);
+    QLoggingCategory::setFilterRules("goatlyn.*.debug=false");
     app.setWindowIcon(QIcon(":/app_icon.png"));
     MainWindow win;
     win.show();

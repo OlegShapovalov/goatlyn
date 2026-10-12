@@ -28,6 +28,7 @@ add_executable(goatlyn
     src/SearchBar.cpp
     src/SettingsDialog.cpp
     src/ConfigManager.cpp
+    src/DebugLog.cpp
     resources/resources.qrc
 )
 

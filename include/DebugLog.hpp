@@ -1,0 +1,6 @@
+#pragma once
+#include <QLoggingCategory>
+
+Q_DECLARE_LOGGING_CATEGORY(lcResize)
+Q_DECLARE_LOGGING_CATEGORY(lcVterm)
+Q_DECLARE_LOGGING_CATEGORY(lcPty)

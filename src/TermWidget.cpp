@@ -1,4 +1,5 @@
 #include "TermWidget.hpp"
+#include "DebugLog.hpp"
 #include "ConfigManager.hpp"
 #include <QPainter>
 #include <QKeyEvent>
@@ -10,7 +11,6 @@
 #include <QGuiApplication>
 #include <QClipboard>
 #include <QDesktopServices>
-#include <QDebug>
 #include <QUrl>
 #include <QProcess>
 #include <algorithm>
@@ -93,13 +93,13 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
         handlingResize_ = false;
         return;
     }
-    qDebug() << "[resize] applying:" << cols_ << "x" << rows_
-             << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
+    qCDebug(lcResize) << "applying:" << cols_ << "x" << rows_
+                      << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
     vterm_set_size(vt_, rows_, cols_);
     vterm_screen_flush_damage(vts_);
     pty_.resize(cols_, rows_);
     update();
-    qDebug() << "[resize] OK";
+    qCDebug(lcResize) << "OK";
     handlingResize_ = false;
 });
     zoomApplyTimer_ = new QTimer(this);
