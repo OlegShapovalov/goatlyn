@@ -53,7 +53,6 @@ int TermWidget::onSetTermProp(VTermProp prop, VTermValue* val, void* user) {
         self->isAltScreen_ = val->boolean;
         self->scrollOffset_ = 0;
         if (self->isAltScreen_) {
-            self->bannerActive_ = false;
             self->currentSuggestion_.clear();
             self->currentInputBuffer_.clear();
         }
@@ -384,16 +383,18 @@ void TermWidget::displayWelcomeBanner() {
     };
 
     std::ostringstream out;
-    out << "\r\n";
+    out << "\x1b[?1049h";
+    out << "\x1b[2J\x1b[H";
     for (const auto& lineText : info) {
         out << pad << lineText << "\r\n";
     }
     out << "\r\n";
+    out << "\x1b[0;90m" << pad << "Нажмите любую клавишу..." << "\x1b[0m\r\n";
 
-    std::string s = out.str();
-    vterm_input_write(vt_, s.data(), s.size());
-    vterm_screen_flush_damage(vts_);
-    update();
+std::string s = out.str();
+vterm_input_write(vt_, s.data(), s.size());
+vterm_screen_flush_damage(vts_);
+update();
 }
 
 void TermWidget::pollActiveProcess() {
@@ -689,11 +690,11 @@ void TermWidget::paintEvent(QPaintEvent*) {
     painter.fillRect(rect(), bgFill);
 
     static QPixmap goatImg(":/goatlyn.png");
-    if (!goatImg.isNull() && ConfigManager::instance().showBanner() && !isAltScreen_ && history_.empty() && scrollOffset_ == 0) {
+    if (!goatImg.isNull() && bannerActive_ && isAltScreen_) {
         int avatarH = charH_ * 16;
         int avatarW = charW_ * 34;
         QPixmap scaled = goatImg.scaled(avatarW, avatarH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        int imgY = charH_; 
+        int imgY = charH_;
         int imgX = charW_ * 2;
         painter.drawPixmap(imgX, imgY, scaled);
     }
@@ -978,6 +979,14 @@ void TermWidget::wheelEvent(QWheelEvent* event) {
 }
 
 void TermWidget::keyPressEvent(QKeyEvent* event) {
+        if (bannerActive_) {
+        bannerActive_ = false;
+        const char* seq = "\x1b[?1049l";
+        vterm_input_write(vt_, seq, 8);
+        vterm_screen_flush_damage(vts_);
+        update();
+        return;
+    }
     auto mods = event->modifiers();
     int key = event->key();
 
