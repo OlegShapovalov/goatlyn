@@ -1,3 +1,4 @@
+[![Build](https://github.com/OlegShapovalov/goatlyn/actions/workflows/build.yml/badge.svg)](https://github.com/OlegShapovalov/goatlyn/actions/workflows/build.yml)
 # 🐐 Goatlyn Terminal
 
 Fast and lightweight Qt6/C++ terminal emulator.
