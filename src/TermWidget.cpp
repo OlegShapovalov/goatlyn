@@ -121,7 +121,9 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
 
     setupVTerm();
 
-    pty_.start("/bin/bash", cwd, cols_, rows_);
+    QString shellPath = ConfigManager::instance().shell();
+    if (shellPath.isEmpty()) shellPath = "/bin/bash";
+    pty_.start(shellPath.toStdString(), cwd, cols_, rows_);
 
     notifier_ = new QSocketNotifier(pty_.getMasterFd(), QSocketNotifier::Read, this);
     connect(notifier_, &QSocketNotifier::activated, this, &TermWidget::onPtyRead);
