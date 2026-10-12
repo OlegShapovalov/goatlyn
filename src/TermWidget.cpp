@@ -102,6 +102,12 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
     qDebug() << "[resize] OK";
     handlingResize_ = false;
 });
+    zoomApplyTimer_ = new QTimer(this);
+    zoomApplyTimer_->setSingleShot(true);
+    zoomApplyTimer_->setInterval(50);
+    connect(zoomApplyTimer_, &QTimer::timeout, this, [this]() {
+        applyAccumulatedZoom();
+    });
 
     connect(&ConfigManager::instance(), &ConfigManager::configChanged, this, [this]() {
         updateFontMetrics();
@@ -216,6 +222,22 @@ void TermWidget::resetZoom() {
         emit stateChanged(this);
         update();
     }
+}
+
+void TermWidget::applyAccumulatedZoom() {
+    if (accumulatedZoomDelta_ == 0) return;
+
+    int steps = accumulatedZoomDelta_ / 120;
+    if (steps == 0) {
+        steps = (accumulatedZoomDelta_ > 0) ? 1 : -1;
+    }
+
+    for (int i = 0; i < std::abs(steps); ++i) {
+        if (steps > 0) zoomIn();
+        else zoomOut();
+    }
+
+    accumulatedZoomDelta_ = 0;
 }
 
 void TermWidget::setSearchQuery(const QString& query) {
@@ -924,9 +946,11 @@ void TermWidget::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void TermWidget::wheelEvent(QWheelEvent* event) {
-    if (event->modifiers() & Qt::ControlModifier) {
-        if (event->angleDelta().y() > 0) zoomIn();
-        else if (event->angleDelta().y() < 0) zoomOut();
+        if (event->modifiers() & Qt::ControlModifier) {
+            accumulatedZoomDelta_ += event->angleDelta().y();    
+            if (!zoomApplyTimer_->isActive()) {
+                zoomApplyTimer_->start();
+        }
         return;
     }
 

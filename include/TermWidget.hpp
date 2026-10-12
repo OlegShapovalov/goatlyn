@@ -93,6 +93,7 @@ private:
     QTimer* procPollTimer_ = nullptr;
     QTimer* cursorBlinkTimer_ = nullptr;
     QTimer* resizeTimer_ = nullptr;
+    QTimer* zoomApplyTimer_ = nullptr;
 
     int cols_ = 80;
     int rows_ = 24;
@@ -107,6 +108,7 @@ private:
     bool isAltScreen_ = false;
     bool bannerActive_ = true;
     bool handlingResize_ = false;
+    int accumulatedZoomDelta_ = 0;
     std::string currentProcName_ = "bash";
 
     std::deque<std::vector<VTermScreenCell>> history_;
@@ -130,6 +132,7 @@ private:
 
     void setupVTerm();
     void updateFontMetrics();
+    void applyAccumulatedZoom();
     void displayWelcomeBanner();
     void updateSuggestion();
     void updateSearchResults();
