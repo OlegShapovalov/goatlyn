@@ -1,6 +1,7 @@
 #include "SettingsDialog.hpp"
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <QMessageBox>
 #include <QFormLayout>
 #include <QDialogButtonBox>
 #include <QLabel>
@@ -121,6 +122,18 @@ void SettingsDialog::updateColorButtons() {
 }
 
 void SettingsDialog::onThemeSelected(const QString& name) {
+    // Обновляем состояние кнопки удаления
+    bool canDelete = false;
+    if (name != ConfigManager::SystemThemeName) {
+        for (const auto& th : ConfigManager::instance().allThemes()) {
+            if (th.name == name && th.isCustom) {
+                canDelete = true;
+                break;
+            }
+        }
+    }
+    if (btnDeleteTheme_) btnDeleteTheme_->setEnabled(canDelete);
+
     if (name == ConfigManager::SystemThemeName) {
         const QPalette& pal = QApplication::palette();
         currentBg_ = pal.color(QPalette::Base);
@@ -173,6 +186,40 @@ void SettingsDialog::createNewTheme() {
     }
 }
 
+void SettingsDialog::deleteCurrentTheme() {
+    QString name = themeCombo_->currentText();
+    if (name.isEmpty()) return;
+    if (name == ConfigManager::SystemThemeName) return;
+
+    bool isCustom = false;
+    for (const auto& th : ConfigManager::instance().allThemes()) {
+        if (th.name == name && th.isCustom) {
+            isCustom = true;
+            break;
+        }
+    }
+    if (!isCustom) return;
+
+    auto reply = QMessageBox::question(
+        this,
+        "Удаление темы",
+        QString("Удалить тему «%1»?").arg(name),
+        QMessageBox::Yes | QMessageBox::No
+    );
+    if (reply != QMessageBox::Yes) return;
+
+    ConfigManager::instance().removeCustomTheme(name);
+
+    int idx = themeCombo_->findText(name);
+    if (idx >= 0) {
+        themeCombo_->removeItem(idx);
+    }
+    if (themeCombo_->count() > 0) {
+        themeCombo_->setCurrentIndex(0);
+    }
+    if (btnDeleteTheme_) btnDeleteTheme_->setEnabled(false);
+}
+
 QWidget* SettingsDialog::createAppearancePage() {
     auto* w = new QWidget(this);
     auto* form = new QFormLayout(w);
@@ -189,9 +236,20 @@ QWidget* SettingsDialog::createAppearancePage() {
     btnNewTheme_ = new QPushButton("+ Своя тема", w);
     btnNewTheme_->setStyleSheet("QPushButton { background-color: rgba(128, 128, 128, 40); border: 1px solid rgba(128, 128, 128, 80); border-radius: 4px; padding: 5px 12px; font-weight: normal; }");
     connect(btnNewTheme_, &QPushButton::clicked, this, &SettingsDialog::createNewTheme);
-
+    
+    btnDeleteTheme_ = new QPushButton("− Удалить", w);
+    btnDeleteTheme_->setStyleSheet(
+        "QPushButton { background-color: rgba(200, 80, 80, 60); "
+        "border: 1px solid rgba(200, 80, 80, 120); "
+        "border-radius: 4px; padding: 5px 12px; font-weight: normal; }"
+        "QPushButton:disabled { background-color: rgba(128, 128, 128, 30); "
+        "border: 1px solid rgba(128, 128, 128, 60); color: rgba(200,200,200,80); }"
+    );
+    btnDeleteTheme_->setEnabled(false);
+    connect(btnDeleteTheme_, &QPushButton::clicked, this, &SettingsDialog::deleteCurrentTheme);
     themeHBox->addWidget(themeCombo_, 1);
     themeHBox->addWidget(btnNewTheme_);
+    themeHBox->addWidget(btnDeleteTheme_);
     form->addRow("Цветовая тема:", themeHBox);
 
     btnBgColor_ = new QPushButton(w);
