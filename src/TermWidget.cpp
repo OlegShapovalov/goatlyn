@@ -676,8 +676,7 @@ void TermWidget::openTarget(const QString& target) {
         editorProg = QStringLiteral("xdg-open");
     }
 
-    QString shellCmd = QStringLiteral("exec %1 \"%2\" >/dev/null 2>&1 &").arg(editorProg, finalPath);
-    QProcess::startDetached(QStringLiteral("/bin/sh"), {QStringLiteral("-c"), shellCmd});
+    QProcess::startDetached(editorProg, {finalPath});
 }
 
 void TermWidget::paintEvent(QPaintEvent*) {
