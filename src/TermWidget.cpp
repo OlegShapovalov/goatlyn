@@ -260,7 +260,13 @@ void TermWidget::clearSearch() {
 
 void TermWidget::findNextMatch() {
     if (searchMatches_.empty()) return;
-    currentMatchIdx_ = (currentMatchIdx_ + 1) % static_cast<int>(searchMatches_.size());
+    // Если индекс ещё не выставлен (-1 после clearSearch или нового запроса) —
+    // начинаем с первого матча, а не перескакиваем на второй.
+    if (currentMatchIdx_ < 0) {
+        currentMatchIdx_ = 0;
+    } else {
+        currentMatchIdx_ = (currentMatchIdx_ + 1) % static_cast<int>(searchMatches_.size());
+    }
     const auto& match = searchMatches_[currentMatchIdx_];
     scrollOffset_ = (match.absRow < 0) ? -match.absRow : 0;
     emit searchMatchesUpdated(currentMatchIdx_ + 1, static_cast<int>(searchMatches_.size()));
@@ -299,13 +305,13 @@ void TermWidget::updateSearchResults() {
         }
     }
 
-    if (!searchMatches_.empty()) {
-        currentMatchIdx_ = 0;
-        emit searchMatchesUpdated(1, static_cast<int>(searchMatches_.size()));
+        if (!searchMatches_.empty()) {
+        currentMatchIdx_ = -1;          // сброс: следующий findNextMatch начнёт с 0
+        findNextMatch();                 // прокрутит к первому матчу и обновит счётчик
     } else {
         emit searchMatchesUpdated(0, 0);
+        update();
     }
-    update();
 }
 
 void TermWidget::updateSuggestion() {
