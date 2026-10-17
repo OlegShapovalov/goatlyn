@@ -154,7 +154,7 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
         QTimer::singleShot(80, this, &TermWidget::displayWelcomeBanner);
     } else {
         bannerActive_ = false;
-        
+
     }
 }
 
@@ -680,11 +680,23 @@ void TermWidget::openTarget(const QString& target) {
         }
     }
 
-    if (editorProg.isEmpty()) {
+        if (editorProg.isEmpty()) {
         editorProg = QStringLiteral("xdg-open");
     }
 
-    QProcess::startDetached(editorProg, {finalPath});
+    // $EDITOR может содержать аргументы: "code --wait", "vim -u NONE",
+    // "subl -n -w". QProcess::startDetached ждёт имя программы первым
+    // аргументом, поэтому строку надо разбить на программу + аргументы.
+    QStringList parts = QProcess::splitCommand(editorProg);
+    if (parts.isEmpty()) {
+        parts << QStringLiteral("xdg-open");
+    }
+    QString prog = parts.takeFirst();
+    parts << finalPath;
+
+    if (!QProcess::startDetached(prog, parts)) {
+        qWarning() << "openTarget: failed to start" << prog << "with args" << parts;
+    }
 }
 
 void TermWidget::paintEvent(QPaintEvent*) {
