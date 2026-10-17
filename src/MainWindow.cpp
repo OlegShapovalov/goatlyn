@@ -313,10 +313,14 @@ void MainWindow::onTermExited(TermWidget* term) {
     QWidget* parent = term->parentWidget();
     auto* splitter = qobject_cast<QSplitter*>(parent);
 
+    // Qt не даёт removeWidget() у QSplitter. Отвязываем через setParent(nullptr):
+    // сплиттер получит сигнал destroyed и уберёт терм из своего списка.
+    term->setParent(nullptr);
     term->deleteLater();
 
     if (splitter) {
-        if (splitter->count() <= 1) {
+        // Теперь count() честный: отвязанный терм уже не считается.
+        if (splitter->count() == 0) {
             for (int i = 0; i < stackWidget_->count(); ++i) {
                 if (stackWidget_->widget(i) == splitter) {
                     onTabCloseRequested(i);
