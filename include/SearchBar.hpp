@@ -12,6 +12,7 @@ public:
     void activate();
     void setMatchInfo(int current, int total);
     void clearQuery();
+    void applyTheme();
 
 signals:
     void searchChanged(const QString& query);
@@ -25,4 +26,7 @@ protected:
 private:
     QLineEdit* input_ = nullptr;
     QLabel* matchCountLabel_ = nullptr;
+    QPushButton* btnPrev_ = nullptr;
+    QPushButton* btnNext_ = nullptr;
+    QPushButton* btnClose_ = nullptr;
 };
