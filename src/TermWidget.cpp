@@ -150,7 +150,11 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
     }
 
     if (ConfigManager::instance().showBanner()) {
+        bannerActive_ = true;
         QTimer::singleShot(80, this, &TermWidget::displayWelcomeBanner);
+    } else {
+        bannerActive_ = false;
+        
     }
 }
 
@@ -323,7 +327,10 @@ void TermWidget::updateSuggestion() {
 }
 
 void TermWidget::displayWelcomeBanner() {
-    if (!ConfigManager::instance().showBanner()) return;
+    if (!ConfigManager::instance().showBanner()) {
+        bannerActive_ =false;
+        return;
+    }
 
     std::string osName = "Arch Linux";
     std::ifstream osFile("/etc/os-release");

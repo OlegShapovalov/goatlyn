@@ -106,7 +106,7 @@ private:
     bool cursorBlinkState_ = true;
     int mouseProtocol_ = 0;
     bool isAltScreen_ = false;
-    bool bannerActive_ = true;
+    bool bannerActive_ = false;
     bool handlingResize_ = false;
     int accumulatedZoomDelta_ = 0;
     std::string currentProcName_ = "bash";
