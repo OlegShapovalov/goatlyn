@@ -13,6 +13,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QProcess>
+#include <QCoreApplication>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -23,7 +24,8 @@
 
 int TermWidget::sbPushline(int cols, const VTermScreenCell* cells, void* user) {
     auto* self = static_cast<TermWidget*>(user);
-    if (self->isAltScreen_) return 0;
+    if (self->isAltScreen_ || self->pendingResize_) return 0;
+
     std::vector<VTermScreenCell> line(cells, cells + cols);
     self->history_.push_back(std::move(line));
     if (self->history_.size() > self->maxHistory_) {
@@ -34,7 +36,7 @@ int TermWidget::sbPushline(int cols, const VTermScreenCell* cells, void* user) {
 
 int TermWidget::sbPopline(int cols, VTermScreenCell* cells, void* user) {
     auto* self = static_cast<TermWidget*>(user);
-    if (self->history_.empty()) return 0;
+    if (self->pendingResize_ || self->history_.empty()) return 0;
 
     const auto& line = self->history_.back();
     int count = std::min((int)line.size(), cols);
@@ -86,21 +88,29 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
 
     resizeTimer_ = new QTimer(this);
     resizeTimer_->setSingleShot(true);
-    resizeTimer_->setInterval(0);
+    resizeTimer_->setInterval(150);
     connect(resizeTimer_, &QTimer::timeout, this, [this]() {
-    if (!vt_) {
+        if (!vt_) {
+            handlingResize_ = false;
+            pendingResize_ = false;
+            return;
+        }
+        
+        vterm_set_size(vt_, rows_, cols_);
+        
+        if (!pendingPtyData_.empty()) {
+            vterm_input_write(vt_, pendingPtyData_.data(), pendingPtyData_.size());
+            pendingPtyData_.clear();
+        }
+        
+        vterm_screen_flush_damage(vts_);
+        
+        pendingResize_ = false;
         handlingResize_ = false;
-        return;
-    }
-    qCDebug(lcResize) << "applying:" << cols_ << "x" << rows_
-                      << "at" << QTime::currentTime().toString("hh:mm:ss.zzz");
-    vterm_set_size(vt_, rows_, cols_);
-    vterm_screen_flush_damage(vts_);
-    pty_.resize(cols_, rows_);
-    update();
-    qCDebug(lcResize) << "OK";
-    handlingResize_ = false;
-});
+        
+        update();
+    });
+
     zoomApplyTimer_ = new QTimer(this);
     zoomApplyTimer_->setSingleShot(true);
     zoomApplyTimer_->setInterval(50);
@@ -154,7 +164,6 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
         QTimer::singleShot(80, this, &TermWidget::displayWelcomeBanner);
     } else {
         bannerActive_ = false;
-
     }
 }
 
@@ -194,6 +203,10 @@ void TermWidget::updateFontMetrics() {
     charW_ = std::max(1, charW_);
     charH_ = std::max(1, fm.lineSpacing());
     charAscent_ = fm.ascent();
+}
+
+void TermWidget::applyPendingResize() {
+    // Отключено: ресайз теперь полностью контролируется через resizeTimer_
 }
 
 void TermWidget::zoomIn() {
@@ -260,8 +273,6 @@ void TermWidget::clearSearch() {
 
 void TermWidget::findNextMatch() {
     if (searchMatches_.empty()) return;
-    // Если индекс ещё не выставлен (-1 после clearSearch или нового запроса) —
-    // начинаем с первого матча, а не перескакиваем на второй.
     if (currentMatchIdx_ < 0) {
         currentMatchIdx_ = 0;
     } else {
@@ -305,9 +316,9 @@ void TermWidget::updateSearchResults() {
         }
     }
 
-        if (!searchMatches_.empty()) {
-        currentMatchIdx_ = -1;          // сброс: следующий findNextMatch начнёт с 0
-        findNextMatch();                 // прокрутит к первому матчу и обновит счётчик
+    if (!searchMatches_.empty()) {
+        currentMatchIdx_ = -1;
+        findNextMatch();
     } else {
         emit searchMatchesUpdated(0, 0);
         update();
@@ -334,7 +345,7 @@ void TermWidget::updateSuggestion() {
 
 void TermWidget::displayWelcomeBanner() {
     if (!ConfigManager::instance().showBanner()) {
-        bannerActive_ =false;
+        bannerActive_ = false;
         return;
     }
 
@@ -404,10 +415,10 @@ void TermWidget::displayWelcomeBanner() {
     out << "\r\n";
     out << "\x1b[0;90m" << pad << "Нажмите любую клавишу..." << "\x1b[0m\r\n";
 
-std::string s = out.str();
-vterm_input_write(vt_, s.data(), s.size());
-vterm_screen_flush_damage(vts_);
-update();
+    std::string s = out.str();
+    vterm_input_write(vt_, s.data(), s.size());
+    vterm_screen_flush_damage(vts_);
+    update();
 }
 
 void TermWidget::pollActiveProcess() {
@@ -505,36 +516,29 @@ QColor TermWidget::resolveColor(const VTermColor& color, bool isBg) {
 
 void TermWidget::onPtyRead() {
     std::vector<char> buffer(16384);
-    ssize_t bytes = read(pty_.getMasterFd(), buffer.data(), buffer.size());
+    while (true) {
+        ssize_t bytes = read(pty_.getMasterFd(), buffer.data(), buffer.size());
+        if (bytes > 0) {
+            if (pendingResize_) {
+                pendingPtyData_.insert(pendingPtyData_.end(), buffer.begin(), buffer.begin() + bytes);
+            } else {
+                vterm_input_write(vt_, buffer.data(), bytes);
+            }
+        } else if (bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            break;
+        } else if (bytes <= 0) {
+            notifier_->setEnabled(false);
+            procPollTimer_->stop();
+            cursorBlinkTimer_->stop();
+            emit termExited(this);
+            return;
+        }
+    }
 
-    if (bytes > 0) {
-        vterm_input_write(vt_, buffer.data(), bytes);
+    if (!pendingResize_) {
         vterm_screen_flush_damage(vts_);
         update();
-        return;
     }
-
-    if (bytes == 0) {
-        // EOF: дочерний процесс закрыл pty. Это настоящий конец.
-        notifier_->setEnabled(false);
-        procPollTimer_->stop();
-        cursorBlinkTimer_->stop();
-        emit termExited(this);
-        return;
-    }
-
-    // bytes < 0
-    if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
-        // Не конец: просто данных сейчас нет. QSocketNotifier
-        // мог сработать раньше, чем данные пришли в буфер.
-        return;
-    }
-
-    // Реальная ошибка (EIO, EBADF и т.п.) — процесс считаем мёртвым.
-    notifier_->setEnabled(false);
-    procPollTimer_->stop();
-    cursorBlinkTimer_->stop();
-    emit termExited(this);
 }
 
 CellPoint TermWidget::pixelToCell(const QPoint& pos) const {
@@ -686,13 +690,10 @@ void TermWidget::openTarget(const QString& target) {
         }
     }
 
-        if (editorProg.isEmpty()) {
+    if (editorProg.isEmpty()) {
         editorProg = QStringLiteral("xdg-open");
     }
 
-    // $EDITOR может содержать аргументы: "code --wait", "vim -u NONE",
-    // "subl -n -w". QProcess::startDetached ждёт имя программы первым
-    // аргументом, поэтому строку надо разбить на программу + аргументы.
     QStringList parts = QProcess::splitCommand(editorProg);
     if (parts.isEmpty()) {
         parts << QStringLiteral("xdg-open");
@@ -707,6 +708,14 @@ void TermWidget::openTarget(const QString& target) {
 
 void TermWidget::paintEvent(QPaintEvent*) {
     QPainter painter(this);
+    
+    if (pendingResize_) {
+        if (!cachedFrame_.isNull()) {
+            painter.drawPixmap(rect(), cachedFrame_);
+        }
+        return;
+    }
+
     painter.setFont(font());
 
     const auto& th = ConfigManager::instance().currentTheme();
@@ -817,7 +826,6 @@ void TermWidget::paintEvent(QPaintEvent*) {
                 }
             }
 
-            // Отрисовка ghost-подсказки (только в bash вне alt-screen)
             if (!currentSuggestion_.isEmpty() && !isAltScreen_ && currentProcName_ == "bash") {
                 QColor ghostColor = th.foreground;
                 ghostColor.setAlpha(120);
@@ -827,6 +835,16 @@ void TermWidget::paintEvent(QPaintEvent*) {
                 painter.drawText(ghostX, ghostY, currentSuggestion_);
             }
         }
+    }
+
+    // Вместо прямого grab() в конце paintEvent, делаем это АСИНХРОННО:
+    // Таймер с задержкой 0 сработает в следующем цикле событий Qt, когда paintEvent уже завершится.
+    if (!pendingResize_) {
+        QTimer::singleShot(0, this, [this]() {
+            if (!pendingResize_) {
+                cachedFrame_ = this->grab();
+            }
+        });
     }
 }
 
@@ -886,8 +904,9 @@ void TermWidget::resizeEvent(QResizeEvent*) {
 
     cols_ = newCols;
     rows_ = newRows;
+    pendingResize_ = true;
 
-    // pty_.resize УБРАН отсюда — перенесён в лямбду
+    pty_.resize(cols_, rows_);
 
     if (resizeTimer_->isActive()) {
         resizeTimer_->stop();
@@ -973,10 +992,10 @@ void TermWidget::mouseReleaseEvent(QMouseEvent* event) {
 }
 
 void TermWidget::wheelEvent(QWheelEvent* event) {
-        if (event->modifiers() & Qt::ControlModifier) {
-            accumulatedZoomDelta_ += event->angleDelta().y();    
-            if (!zoomApplyTimer_->isActive()) {
-                zoomApplyTimer_->start();
+    if (event->modifiers() & Qt::ControlModifier) {
+        accumulatedZoomDelta_ += event->angleDelta().y();    
+        if (!zoomApplyTimer_->isActive()) {
+            zoomApplyTimer_->start();
         }
         return;
     }
@@ -1004,7 +1023,7 @@ void TermWidget::wheelEvent(QWheelEvent* event) {
 }
 
 void TermWidget::keyPressEvent(QKeyEvent* event) {
-        if (bannerActive_) {
+    if (bannerActive_) {
         bannerActive_ = false;
         const char* seq = "\x1b[?1049l";
         vterm_input_write(vt_, seq, 8);
@@ -1012,10 +1031,9 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         update();
         return;
     }
+    
     auto mods = event->modifiers();
     int key = event->key();
-
-
 
     if (key == Qt::Key_Control) {
         checkTargetHover(mapFromGlobal(QCursor::pos()), true);
@@ -1036,7 +1054,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    // Вставка из буфера обмена (Ctrl+Shift+V)
     if ((mods & Qt::ControlModifier) && (mods & Qt::ShiftModifier) && key == Qt::Key_V) {
         QClipboard* clipboard = QGuiApplication::clipboard();
         QString text = clipboard->text();
@@ -1049,13 +1066,11 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
             text.replace("\r", "\n");
 
             if (isAltScreen_) {
-                // Bracketed Paste для nano/vim
                 pty_.writeData("\x1b[200~", 6);
                 QByteArray data = text.toUtf8();
                 pty_.writeData(data.data(), data.size());
                 pty_.writeData("\x1b[201~", 6);
             } else {
-                // Для шелла отправляем чистый \n, как в Kitty
                 QByteArray data = text.toUtf8();
                 pty_.writeData(data.data(), data.size());
             }
@@ -1076,7 +1091,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         }
     }
 
-    // Принятие автодополнения (по стрелке вправо или Tab при пустом хвосте)
     if ((key == Qt::Key_Right || key == Qt::Key_Tab) && !currentSuggestion_.isEmpty() && !isAltScreen_ && currentProcName_ == "bash") {
         QByteArray text = currentSuggestion_.toUtf8();
         currentInputBuffer_ += currentSuggestion_;
@@ -1106,7 +1120,6 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         currentInputBuffer_.clear();
         currentSuggestion_.clear();
     } else if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Escape) {
-        // Сброс подсказки при навигации по истории или отмене
         currentInputBuffer_.clear();
         currentSuggestion_.clear();
     } else if (key == Qt::Key_Backspace) {

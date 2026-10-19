@@ -3,6 +3,7 @@
 #include <QSocketNotifier>
 #include <QTimer>
 #include <QRegularExpression>
+#include <QPixmap>
 #include <vterm.h>
 #include <deque>
 #include <vector>
@@ -108,12 +109,19 @@ private:
     bool isAltScreen_ = false;
     bool bannerActive_ = false;
     bool handlingResize_ = false;
+    bool pendingResize_ = false;
     int accumulatedZoomDelta_ = 0;
     std::string currentProcName_ = "bash";
 
     std::deque<std::vector<VTermScreenCell>> history_;
-    const size_t maxHistory_ = 3000;
+    const size_t maxHistory_ = 500;
     int scrollOffset_ = 0;
+
+    // Буфер для накопления данных от pty, пока идет ресайз
+    std::vector<char> pendingPtyData_;
+    
+    // Кэш кадра для отрисовки во время ресайза
+    QPixmap cachedFrame_;
 
     bool isSelecting_ = false;
     std::optional<CellPoint> selStart_;
@@ -137,6 +145,7 @@ private:
     void updateSuggestion();
     void updateSearchResults();
     void scrollToBottom();
+    void applyPendingResize();
     QColor resolveColor(const VTermColor& color, bool isBg);
     void sendMouseEvent(int button, int col, int row, bool isRelease);
 
