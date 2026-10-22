@@ -1,6 +1,6 @@
 # Maintainer: Oleg Shapovalov <https://github.com/OlegShapovalov>
 pkgname=goatlyn-git
-pkgver=1.0.0.r0
+pkgver=1.0.0.r28.788f9ff
 pkgrel=1
 pkgdesc="Fast and modern Qt6/C++ terminal emulator with tabs, splits and autosuggestions"
 arch=('x86_64')

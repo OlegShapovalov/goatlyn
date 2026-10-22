@@ -19,3 +19,4 @@ aur-package/*.tar.xz
 aur-package/*.tar.zst
 aur-package/*.pkg.tar.*
 build-debug/
+aur-package/goatlyn/
