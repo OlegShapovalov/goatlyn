@@ -21,10 +21,11 @@
 #include <unordered_map>
 #include <sys/utsname.h>
 #include <cstdlib>
+#include <string_view>
 
 int TermWidget::sbPushline(int cols, const VTermScreenCell* cells, void* user) {
     auto* self = static_cast<TermWidget*>(user);
-    if (self->isAltScreen_ || self->pendingResize_) return 0;
+    if (self->isAltScreen_) return 0;
 
     std::vector<VTermScreenCell> line(cells, cells + cols);
     self->history_.push_back(std::move(line));
@@ -36,7 +37,7 @@ int TermWidget::sbPushline(int cols, const VTermScreenCell* cells, void* user) {
 
 int TermWidget::sbPopline(int cols, VTermScreenCell* cells, void* user) {
     auto* self = static_cast<TermWidget*>(user);
-    if (self->pendingResize_ || self->history_.empty()) return 0;
+    if (self->history_.empty()) return 0;
 
     const auto& line = self->history_.back();
     int count = std::min((int)line.size(), cols);
@@ -80,6 +81,7 @@ QString TermWidget::getProcessIcon(const std::string& proc) {
 }
 
 TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent) {
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
     setCursor(Qt::IBeamCursor);
@@ -88,27 +90,23 @@ TermWidget::TermWidget(const std::string& cwd, QWidget* parent) : QWidget(parent
 
     resizeTimer_ = new QTimer(this);
     resizeTimer_->setSingleShot(true);
-    resizeTimer_->setInterval(150);
     connect(resizeTimer_, &QTimer::timeout, this, [this]() {
         if (!vt_) {
-            handlingResize_ = false;
             pendingResize_ = false;
             return;
         }
-        
+
+        pty_.resize(cols_, rows_);
         vterm_set_size(vt_, rows_, cols_);
-        
-        if (!pendingPtyData_.empty()) {
-            vterm_input_write(vt_, pendingPtyData_.data(), pendingPtyData_.size());
-            pendingPtyData_.clear();
-        }
-        
         vterm_screen_flush_damage(vts_);
-        
+
         pendingResize_ = false;
-        handlingResize_ = false;
-        
+
         update();
+
+        QMetaObject::invokeMethod(this, [this]() {
+            emit stateChanged(this);
+        }, Qt::QueuedConnection);
     });
 
     zoomApplyTimer_ = new QTimer(this);
@@ -206,15 +204,20 @@ void TermWidget::updateFontMetrics() {
 }
 
 void TermWidget::applyPendingResize() {
-    // Отключено: ресайз теперь полностью контролируется через resizeTimer_
 }
 
 void TermWidget::zoomIn() {
     if (fontSize_ < 36) {
         fontSize_ += 1;
         updateFontMetrics();
-        if (resizeTimer_->isActive()) resizeTimer_->stop();
-        resizeTimer_->start();
+        int newCols = std::clamp(width() / std::max(1, charW_), 20, 300);
+        int newRows = std::clamp(height() / std::max(1, charH_), 10, 100);
+        if (newCols != cols_ || newRows != rows_) {
+            cols_ = newCols;
+            rows_ = newRows;
+            if (resizeTimer_->isActive()) resizeTimer_->stop();
+            resizeTimer_->start(16);
+        }
         emit stateChanged(this);
         update();
     }
@@ -224,8 +227,14 @@ void TermWidget::zoomOut() {
     if (fontSize_ > 6) {
         fontSize_ -= 1;
         updateFontMetrics();
-        if (resizeTimer_->isActive()) resizeTimer_->stop();
-        resizeTimer_->start();
+        int newCols = std::clamp(width() / std::max(1, charW_), 20, 300);
+        int newRows = std::clamp(height() / std::max(1, charH_), 10, 100);
+        if (newCols != cols_ || newRows != rows_) {
+            cols_ = newCols;
+            rows_ = newRows;
+            if (resizeTimer_->isActive()) resizeTimer_->stop();
+            resizeTimer_->start(16);
+        }
         emit stateChanged(this);
         update();
     }
@@ -235,8 +244,14 @@ void TermWidget::resetZoom() {
     if (fontSize_ != defaultFontSize_) {
         fontSize_ = defaultFontSize_;
         updateFontMetrics();
-        if (resizeTimer_->isActive()) resizeTimer_->stop();
-        resizeTimer_->start();
+        int newCols = std::clamp(width() / std::max(1, charW_), 20, 300);
+        int newRows = std::clamp(height() / std::max(1, charH_), 10, 100);
+        if (newCols != cols_ || newRows != rows_) {
+            cols_ = newCols;
+            rows_ = newRows;
+            if (resizeTimer_->isActive()) resizeTimer_->stop();
+            resizeTimer_->start(16);
+        }
         emit stateChanged(this);
         update();
     }
@@ -519,10 +534,15 @@ void TermWidget::onPtyRead() {
     while (true) {
         ssize_t bytes = read(pty_.getMasterFd(), buffer.data(), buffer.size());
         if (bytes > 0) {
-            if (pendingResize_) {
-                pendingPtyData_.insert(pendingPtyData_.end(), buffer.begin(), buffer.begin() + bytes);
-            } else {
-                vterm_input_write(vt_, buffer.data(), bytes);
+            vterm_input_write(vt_, buffer.data(), bytes);
+
+            std::string_view chunk(buffer.data(), bytes);
+            if (chunk.find("\x1b[6n") != std::string_view::npos) {
+                VTermPos pos;
+                vterm_state_get_cursorpos(state_, &pos);
+                char reply[32];
+                int len = snprintf(reply, sizeof(reply), "\x1b[%d;%dR", pos.row + 1, pos.col + 1);
+                pty_.writeData(reply, len);
             }
         } else if (bytes < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             break;
@@ -535,10 +555,8 @@ void TermWidget::onPtyRead() {
         }
     }
 
-    if (!pendingResize_) {
-        vterm_screen_flush_damage(vts_);
-        update();
-    }
+    vterm_screen_flush_damage(vts_);
+    update();
 }
 
 CellPoint TermWidget::pixelToCell(const QPoint& pos) const {
@@ -708,13 +726,6 @@ void TermWidget::openTarget(const QString& target) {
 
 void TermWidget::paintEvent(QPaintEvent*) {
     QPainter painter(this);
-    
-    if (pendingResize_) {
-        if (!cachedFrame_.isNull()) {
-            painter.drawPixmap(rect(), cachedFrame_);
-        }
-        return;
-    }
 
     painter.setFont(font());
 
@@ -735,11 +746,20 @@ void TermWidget::paintEvent(QPaintEvent*) {
 
     int historyCount = static_cast<int>(history_.size());
 
+    int renderCols = cols_;
+    int renderRows = rows_;
+    if (vt_) {
+        vterm_get_size(vt_, &renderRows, &renderCols);
+    }
+
     for (int r = 0; r < rows_; ++r) {
+        if (r >= renderRows) break;
         int absRow = r - scrollOffset_;
         int y = r * charH_;
 
         for (int c = 0; c < cols_; ++c) {
+            if (c >= renderCols) break;
+
             VTermScreenCell cell = {};
             bool cellFound = false;
 
@@ -827,24 +847,27 @@ void TermWidget::paintEvent(QPaintEvent*) {
             }
 
             if (!currentSuggestion_.isEmpty() && !isAltScreen_ && currentProcName_ == "bash") {
-                QColor ghostColor = th.foreground;
-                ghostColor.setAlpha(120);
-                painter.setPen(ghostColor);
-                int ghostX = cursor.col * charW_;
-                int ghostY = cursor.row * charH_ + charAscent_;
-                painter.drawText(ghostX, ghostY, currentSuggestion_);
+                // Проверяем, свободна ли строка правее курсора (не редактируем ли середину команды)
+                bool tailIsEmpty = true;
+                for (int c = cursor.col; c < cols_; ++c) {
+                    VTermScreenCell cell = {};
+                    vterm_screen_get_cell(vts_, {cursor.row, c}, &cell);
+                    if (cell.chars[0] && cell.chars[0] != ' ') {
+                        tailIsEmpty = false;
+                        break;
+                    }
+                }
+
+                if (tailIsEmpty) {
+                    QColor ghostColor = th.foreground;
+                    ghostColor.setAlpha(100);
+                    painter.setPen(ghostColor);
+                    int ghostX = cursor.col * charW_;
+                    int ghostY = cursor.row * charH_ + charAscent_;
+                    painter.drawText(ghostX, ghostY, currentSuggestion_);
+                }
             }
         }
-    }
-
-    // Вместо прямого grab() в конце paintEvent, делаем это АСИНХРОННО:
-    // Таймер с задержкой 0 сработает в следующем цикле событий Qt, когда paintEvent уже завершится.
-    if (!pendingResize_) {
-        QTimer::singleShot(0, this, [this]() {
-            if (!pendingResize_) {
-                cachedFrame_ = this->grab();
-            }
-        });
     }
 }
 
@@ -891,14 +914,10 @@ void TermWidget::copySelectionToClipboard() {
 }
 
 void TermWidget::resizeEvent(QResizeEvent*) {
-    if (handlingResize_) return;
-    handlingResize_ = true;
-
     int newCols = std::clamp(width() / std::max(1, charW_), 20, 300);
     int newRows = std::clamp(height() / std::max(1, charH_), 10, 100);
 
     if (newCols == cols_ && newRows == rows_) {
-        handlingResize_ = false;
         return;
     }
 
@@ -906,14 +925,10 @@ void TermWidget::resizeEvent(QResizeEvent*) {
     rows_ = newRows;
     pendingResize_ = true;
 
-    pty_.resize(cols_, rows_);
-
     if (resizeTimer_->isActive()) {
         resizeTimer_->stop();
     }
-    resizeTimer_->start();
-
-    emit stateChanged(this);
+    resizeTimer_->start(16);
 }
 
 void TermWidget::sendMouseEvent(int button, int col, int row, bool isRelease) {
@@ -1062,18 +1077,14 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
             currentSuggestion_.clear();
             currentInputBuffer_.clear();
 
-            text.replace("\r\n", "\n");
-            text.replace("\r", "\n");
+            text.replace("\r\n", "\r");
+            text.replace("\n", "\r");
 
-            if (isAltScreen_) {
-                pty_.writeData("\x1b[200~", 6);
-                QByteArray data = text.toUtf8();
-                pty_.writeData(data.data(), data.size());
-                pty_.writeData("\x1b[201~", 6);
-            } else {
-                QByteArray data = text.toUtf8();
-                pty_.writeData(data.data(), data.size());
-            }
+            pty_.writeData("\x1b[200~", 6);
+            QByteArray data = text.toUtf8();
+            pty_.writeData(data.data(), data.size());
+            pty_.writeData("\x1b[201~", 6);
+
             update();
         }
         return;
@@ -1107,6 +1118,7 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
         update();
     }
 
+    // Сброс и синхронизация ghost-подсказок при служебных клавишах
     if (key == Qt::Key_Return || key == Qt::Key_Enter) {
         QString cmd = currentInputBuffer_.trimmed();
         if (!cmd.isEmpty()) {
@@ -1119,9 +1131,13 @@ void TermWidget::keyPressEvent(QKeyEvent* event) {
     } else if ((mods & Qt::ControlModifier) && key == Qt::Key_C) {
         currentInputBuffer_.clear();
         currentSuggestion_.clear();
-    } else if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Escape) {
-        currentInputBuffer_.clear();
+    } else if (key == Qt::Key_Up || key == Qt::Key_Down || key == Qt::Key_Escape ||
+               key == Qt::Key_Left || key == Qt::Key_Home || key == Qt::Key_End || key == Qt::Key_Tab) {
+        // При навигации по строке скрываем старый фантомный хвост
         currentSuggestion_.clear();
+        if (key != Qt::Key_Left) {
+            currentInputBuffer_.clear();
+        }
     } else if (key == Qt::Key_Backspace) {
         if (!currentInputBuffer_.isEmpty()) {
             currentInputBuffer_.chop(1);

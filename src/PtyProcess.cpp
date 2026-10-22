@@ -5,10 +5,9 @@
 #include <sys/ioctl.h>
 #include <signal.h>
 #include <fcntl.h>
-#include <poll.h>
+#include <unistd.h>
 #include <cerrno>
 #include <sys/wait.h>
-#include <cerrno>
 
 PtyProcess::PtyProcess() = default;
 
@@ -65,15 +64,8 @@ ssize_t PtyProcess::writeData(const char* data, size_t length) {
                 continue;
             }
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Буфер ядра полон: ждем готовности сокета к записи
-                struct pollfd pfd{};
-                pfd.fd = masterFd_;
-                pfd.events = POLLOUT;
-                int ret = poll(&pfd, 1, 100);
-                if (ret <= 0) {
-                    break;
-                }
-                continue;
+                // Не блокируем UI поток через poll; возвращаем уже записанный объем
+                break;
             }
             return -1;
         } else {
@@ -87,38 +79,27 @@ void PtyProcess::stop() {
     if (!running_ && childPid_ <= 0) return;
     running_ = false;
 
-    // 1. Закрываем master fd — ядро отправит SIGHUP сессии на pty.
     if (masterFd_ >= 0) {
         close(masterFd_);
         masterFd_ = -1;
     }
 
-    // 2. Явный SIGHUP — на случай, если дочерний процесс в другой
-    //    process group и pty-сигнал до него не дошёл.
     if (childPid_ > 0) {
         kill(childPid_, SIGHUP);
     }
 
-    // 3. Ждём завершения ребёнка, чтобы не осталось зомби.
     if (childPid_ > 0) {
-        const int maxAttempts = 50;   // ~500 мс максимум
+        const int maxAttempts = 50;
         for (int i = 0; i < maxAttempts; ++i) {
             int status = 0;
             pid_t r = waitpid(childPid_, &status, WNOHANG);
-            if (r == childPid_) {
+            if (r == childPid_ || r == -1) {
                 childPid_ = -1;
                 return;
             }
-            if (r == -1) {
-                // ECHILD — ребёнок уже собран кем-то другим (Qt)
-                childPid_ = -1;
-                return;
-            }
-            // r == 0 — ещё жив, ждём
             usleep(10 * 1000);
         }
 
-        // Таймаут: SIGHUP не сработал — убиваем жёстко.
         kill(childPid_, SIGKILL);
         waitpid(childPid_, nullptr, 0);
         childPid_ = -1;
